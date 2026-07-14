@@ -120,9 +120,10 @@ do_node() {
 		push_config "$target"
 	fi
 	# env vars are set AFTER sudo so they survive into the piped installer.
+	# NON_INTERACTIVE=1 guarantees the remote installer never blocks on a prompt.
 	# shellcheck disable=SC2086,SC2029 # SSH_OPTS word-split + client-side var expansion are intentional
 	ssh $SSH_OPTS "$target" \
-		"curl -fsSL '$INSTALL_URL' | ${SUDO} env VERSION='${VERSION:-}' INTERVAL='${INTERVAL:-}' REPO='${REPO}' sh"
+		"curl -fsSL '$INSTALL_URL' | ${SUDO} env NON_INTERACTIVE=1 VERSION='${VERSION:-}' INTERVAL='${INTERVAL:-}' REPO='${REPO}' sh"
 }
 
 # ---- run --------------------------------------------------------------------

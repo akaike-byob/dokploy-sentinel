@@ -97,14 +97,27 @@ socket** (path is configurable, so rootless Docker / Podman work). This covers c
 Dokploy hosts (Ubuntu 22.04+ defaults).
 
 ```bash
-# one-command install (installs a static binary + a systemd timer, every 60s)
+# interactive: installs a static binary + a systemd timer (every 60s) and prompts
+# for your Slack webhook + settings, writes the config, validates it, and arms it.
 curl -fsSL https://raw.githubusercontent.com/akaike-byob/dokploy-sentinel/main/packaging/install.sh | sh
 
-# then edit the config, point a target at your Slack webhook, and verify:
-sudo $EDITOR /etc/dokploy-sentinel/config.toml
+# automated / non-interactive: pass settings as flags (or env vars) — no prompts.
+curl -fsSL .../packaging/install.sh | sh -s -- \
+  --slack-url 'https://hooks.slack.com/services/XXX' \
+  --host-label web1 --mention '<@U123>' --interval 60s
+
+# verify any time:
 dokploy-sentinel check    --config /etc/dokploy-sentinel/config.toml   # validate the config
 dokploy-sentinel selftest --config /etc/dokploy-sentinel/config.toml   # docker reachable? targets 2xx?
 ```
+
+The installer prompts only on a real terminal (it reads `/dev/tty`, so `curl | sh`
+works); it never blocks an automated or piped-over-SSH run. Provide any setting via
+its `--flag` or the matching env var (`SLACK_URL`, `HOST_LABEL`, `MENTION`,
+`HEARTBEAT_URL`, `INTERVAL`, …); per-tier webhooks (`--slack-warn-url` /
+`--slack-alert-url` / `--slack-page-url`) are supported too. If no webhook is given,
+it installs the example config and leaves the timer **disabled** until you set one.
+Run `install.sh --help` for the full list of flags and env vars.
 
 Prefer to build it yourself:
 

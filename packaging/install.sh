@@ -1,15 +1,31 @@
 #!/bin/sh
 # dokploy-sentinel installer — POSIX sh.
 #
-# Quick install:
+# Quick install (interactive — prompts for the webhook + settings on a terminal):
 #   curl -fsSL https://raw.githubusercontent.com/akaike-byob/dokploy-sentinel/main/packaging/install.sh | sh
 #
-# Options (environment variables):
-#   VERSION=v1.2.3   pin a release (default: latest)
-#   REPO=owner/name  override the source repo (default: akaike-byob/dokploy-sentinel)
-#   INTERVAL=30s     override the timer cadence (baked into a drop-in, survives upgrades)
+# Automated / non-interactive install (settings via flags or env — no prompts):
+#   curl -fsSL .../install.sh | sh -s -- --slack-url 'https://hooks.slack.com/services/...'
+#   SLACK_URL='https://hooks.slack.com/...' HOST_LABEL=web1 sh install.sh --non-interactive
 #
-#   INTERVAL=30s curl -fsSL .../install.sh | sh
+# Settings — each has a --flag and an ENV var; flags win. On a fresh install with a
+# terminal and none of these set, the installer prompts for them (reads /dev/tty, so
+# it works under `curl | sh`). Pass --non-interactive (or -y) to never prompt.
+#   --slack-url URL        / SLACK_URL         one webhook for all tiers (the common case)
+#   --slack-warn-url URL   / SLACK_WARN_URL    per-tier webhooks (each falls back to --slack-url)
+#   --slack-alert-url URL  / SLACK_ALERT_URL
+#   --slack-page-url URL   / SLACK_PAGE_URL
+#   --host-label LABEL     / HOST_LABEL        alert label (empty -> the node hostname)
+#   --mention M            / MENTION           e.g. <@U123>; added only on PAGE
+#   --heartbeat-url URL    / HEARTBEAT_URL     dead-man's-switch ping; empty = off
+#   --interval 30s         / INTERVAL          timer cadence (drop-in; survives upgrades)
+#   --version v1.2.3       / VERSION           pin a release (default: latest)
+#   --repo owner/name      / REPO              source repo (default: akaike-byob/dokploy-sentinel)
+#   --non-interactive, -y  / NON_INTERACTIVE=1 never prompt
+#
+# On a fresh install with no webhook supplied, the example config (placeholder URLs)
+# is written and the timer is left DISABLED until you set a real webhook. An existing
+# config is never overwritten (upgrades keep it).
 #
 # Upgrade (same command — it is idempotent):
 #   curl -fsSL .../install.sh | sh                 # to the latest release
@@ -51,6 +67,17 @@ set -o noglob
 REPO="${REPO:-akaike-byob/dokploy-sentinel}"
 VERSION="${VERSION:-latest}"
 INTERVAL="${INTERVAL:-}"
+
+# Delivery settings (may be set via env or the matching --flags; prompted
+# interactively on a fresh install when a terminal is available).
+SLACK_URL="${SLACK_URL:-}"                 # one webhook for all tiers
+SLACK_WARN_URL="${SLACK_WARN_URL:-}"       # per-tier overrides (optional)
+SLACK_ALERT_URL="${SLACK_ALERT_URL:-}"
+SLACK_PAGE_URL="${SLACK_PAGE_URL:-}"
+HOST_LABEL="${HOST_LABEL:-}"               # empty -> the node hostname
+HEARTBEAT_URL="${HEARTBEAT_URL:-}"         # dead-man's-switch; empty = off
+MENTION="${MENTION:-}"                      # e.g. <@U123>; added only on PAGE
+NON_INTERACTIVE="${NON_INTERACTIVE:-}"      # 1 = never prompt
 
 BIN_NAME="dokploy-sentinel"
 BIN_DEST="/usr/local/bin/${BIN_NAME}"
@@ -188,23 +215,129 @@ install_binary() {
 	STAGED_PKG="${tmpdir}/packaging"
 }
 
+have_delivery_settings() {
+	[ -n "${SLACK_URL}${SLACK_WARN_URL}${SLACK_ALERT_URL}${SLACK_PAGE_URL}" ]
+}
+
+# should_prompt: only on a fresh install, with a terminal, when nothing was given
+# via flags/env and --non-interactive was not passed. Reads from /dev/tty so it
+# works even under `curl … | sh` (where stdin is the script, not the terminal).
+should_prompt() {
+	[ "$NON_INTERACTIVE" = "1" ] && return 1
+	have_delivery_settings && return 1
+	[ -f "$CONFIG_FILE" ] && return 1
+	[ -r /dev/tty ] || return 1
+	return 0
+}
+
+prompt_settings() {
+	log "Interactive setup — press Enter to accept a default; leave the webhook empty to configure later."
+	printf 'Slack incoming webhook URL: ' >/dev/tty
+	IFS= read -r SLACK_URL </dev/tty || SLACK_URL=""
+	printf 'Host label (Enter = this host'"'"'s hostname): ' >/dev/tty
+	IFS= read -r HOST_LABEL </dev/tty || HOST_LABEL=""
+	printf 'PAGE mention, e.g. <@U123> (optional): ' >/dev/tty
+	IFS= read -r MENTION </dev/tty || MENTION=""
+	printf 'Heartbeat URL, dead-man'"'"'s-switch (optional): ' >/dev/tty
+	IFS= read -r HEARTBEAT_URL </dev/tty || HEARTBEAT_URL=""
+	printf 'Timer interval [%s]: ' "${INTERVAL:-60s}" >/dev/tty
+	IFS= read -r _iv </dev/tty || _iv=""
+	if [ -n "$_iv" ]; then INTERVAL="$_iv"; fi
+}
+
+# emit_target NAME URL [MENTION] — append a [targets.NAME] block to the config.
+emit_target() {
+	printf '\n[targets.%s]\nurl = "%s"\n' "$1" "$2" >>"$CONFIG_FILE"
+	if [ -n "$3" ]; then
+		printf 'mention = "%s"\n' "$3" >>"$CONFIG_FILE"
+	fi
+}
+
+# gen_tier NAME URL [MENTION] — emit a target if URL is non-empty and echo the
+# routing token (["NAME"] or []) for that tier.
+gen_tier() {
+	if [ -n "$2" ]; then
+		emit_target "$1" "$2" "$3"
+		printf '["%s"]' "$1"
+	else
+		printf '[]'
+	fi
+}
+
+# generate_config writes a minimal config.toml from the delivery settings. All
+# check blocks are omitted, so the binary applies its built-in defaults.
+generate_config() {
+	umask 077
+	{
+		printf '# dokploy-sentinel config — generated by install.sh.\n'
+		printf '# Full reference (every check + option): %s.example\n' "$CONFIG_FILE"
+		printf '# Re-run the installer to change delivery, or edit + validate:\n'
+		printf '#   dokploy-sentinel check --config %s\n' "$CONFIG_FILE"
+		printf '# Every check uses its built-in default unless you add a [checks.*] block.\n\n'
+		printf 'host_label    = "%s"\n' "$HOST_LABEL"
+		printf 'heartbeat_url = "%s"\n' "$HEARTBEAT_URL"
+	} >"$CONFIG_FILE"
+
+	if [ -n "${SLACK_WARN_URL}${SLACK_ALERT_URL}${SLACK_PAGE_URL}" ]; then
+		# Per-tier delivery (each falls back to the shared --slack-url).
+		uw="${SLACK_WARN_URL:-$SLACK_URL}"
+		ua="${SLACK_ALERT_URL:-$SLACK_URL}"
+		up="${SLACK_PAGE_URL:-$SLACK_URL}"
+		rw="$(gen_tier warn "$uw" "")"
+		ra="$(gen_tier alert "$ua" "")"
+		rp="$(gen_tier page "$up" "$MENTION")"
+		{
+			printf '\n[routing]\n'
+			printf 'WARN  = %s\n' "$rw"
+			printf 'ALERT = %s\n' "$ra"
+			printf 'PAGE  = %s\n' "$rp"
+		} >>"$CONFIG_FILE"
+	else
+		# One webhook for all tiers (the common case).
+		emit_target slack "$SLACK_URL" "$MENTION"
+		{
+			printf '\n[routing]\n'
+			printf 'WARN  = ["slack"]\n'
+			printf 'ALERT = ["slack"]\n'
+			printf 'PAGE  = ["slack"]\n'
+		} >>"$CONFIG_FILE"
+	fi
+	chmod 0600 "$CONFIG_FILE"
+}
+
 install_config() {
-	staged_example="${STAGED_PKG}/config.example.toml"
 	mkdir -p "$CONFIG_DIR"
 	chmod 0700 "$CONFIG_DIR"
 	mkdir -p "$STATE_DIR"
+	staged_example="${STAGED_PKG}/config.example.toml"
+	DELIVERY_READY=0
 
-	if [ ! -f "$staged_example" ]; then
-		warn "config.example.toml not found in archive — skipping config bootstrap"
-		return
+	# Always drop the full annotated reference next to the config.
+	if [ -f "$staged_example" ]; then
+		install -m 0600 "$staged_example" "${CONFIG_FILE}.example"
 	fi
 
 	if [ -f "$CONFIG_FILE" ]; then
-		install -m 0600 "$staged_example" "${CONFIG_FILE}.new"
-		log "existing config kept; reference written to ${CONFIG_FILE}.new"
-	else
+		# Upgrade: never clobber an existing config; refresh the reference.
+		if [ -f "$staged_example" ]; then
+			install -m 0600 "$staged_example" "${CONFIG_FILE}.new"
+		fi
+		log "existing config kept at ${CONFIG_FILE} (latest reference: ${CONFIG_FILE}.new)"
+		DELIVERY_READY=1
+		return
+	fi
+
+	if have_delivery_settings; then
+		generate_config
+		log "wrote ${CONFIG_FILE} (0600) with your delivery settings; full reference at ${CONFIG_FILE}.example"
+		DELIVERY_READY=1
+	elif [ -f "$staged_example" ]; then
 		install -m 0600 "$staged_example" "$CONFIG_FILE"
-		log "wrote default config to ${CONFIG_FILE} (edit before it can deliver alerts)"
+		warn "no webhook provided — installed the example config with PLACEHOLDER URLs (timer NOT armed)"
+		warn "set a real webhook in ${CONFIG_FILE}, then:"
+		warn "  dokploy-sentinel check --config ${CONFIG_FILE} && systemctl enable --now dokploy-sentinel.timer"
+	else
+		warn "no config source available — skipping config bootstrap"
 	fi
 }
 
@@ -230,17 +363,19 @@ EOF
 }
 
 arm() {
+	# Don't arm until delivery is configured (placeholder config -> user must edit).
+	if [ "${DELIVERY_READY:-0}" != "1" ]; then
+		systemctl daemon-reload || true
+		warn "units installed but NOT enabled — configure a webhook first (see messages above)"
+		return 0
+	fi
 	# Refuse to enable on an invalid config.
-	if [ -f "$CONFIG_FILE" ]; then
-		if "$BIN_DEST" check --config "$CONFIG_FILE"; then
-			log "config validated"
-		else
-			warn "config at ${CONFIG_FILE} is invalid — units installed but NOT enabled"
-			warn "fix it, then: dokploy-sentinel check --config ${CONFIG_FILE} && systemctl enable --now dokploy-sentinel.timer"
-			return 0
-		fi
+	if "$BIN_DEST" check --config "$CONFIG_FILE"; then
+		log "config validated"
 	else
-		warn "no config at ${CONFIG_FILE} — units installed but NOT enabled"
+		warn "config at ${CONFIG_FILE} is invalid — units installed but NOT enabled"
+		warn "fix it, then: dokploy-sentinel check --config ${CONFIG_FILE} && systemctl enable --now dokploy-sentinel.timer"
+		systemctl daemon-reload || true
 		return 0
 	fi
 
@@ -254,7 +389,37 @@ arm() {
 	systemctl start dokploy-sentinel.service || warn "immediate run reported an error — check: journalctl -u dokploy-sentinel.service"
 }
 
+parse_install_flags() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--slack-url)         SLACK_URL="$2"; shift 2 ;;
+			--slack-url=*)       SLACK_URL="${1#*=}"; shift ;;
+			--slack-warn-url)    SLACK_WARN_URL="$2"; shift 2 ;;
+			--slack-warn-url=*)  SLACK_WARN_URL="${1#*=}"; shift ;;
+			--slack-alert-url)   SLACK_ALERT_URL="$2"; shift 2 ;;
+			--slack-alert-url=*) SLACK_ALERT_URL="${1#*=}"; shift ;;
+			--slack-page-url)    SLACK_PAGE_URL="$2"; shift 2 ;;
+			--slack-page-url=*)  SLACK_PAGE_URL="${1#*=}"; shift ;;
+			--host-label)        HOST_LABEL="$2"; shift 2 ;;
+			--host-label=*)      HOST_LABEL="${1#*=}"; shift ;;
+			--heartbeat-url)     HEARTBEAT_URL="$2"; shift 2 ;;
+			--heartbeat-url=*)   HEARTBEAT_URL="${1#*=}"; shift ;;
+			--mention)           MENTION="$2"; shift 2 ;;
+			--mention=*)         MENTION="${1#*=}"; shift ;;
+			--interval)          INTERVAL="$2"; shift 2 ;;
+			--interval=*)        INTERVAL="${1#*=}"; shift ;;
+			--version)           VERSION="$2"; shift 2 ;;
+			--version=*)         VERSION="${1#*=}"; shift ;;
+			--repo)              REPO="$2"; shift 2 ;;
+			--repo=*)            REPO="${1#*=}"; shift ;;
+			--non-interactive|--yes|-y) NON_INTERACTIVE=1; shift ;;
+			*) die "unknown install option: $1 (see --help)" ;;
+		esac
+	done
+}
+
 do_install() {
+	parse_install_flags "$@"
 	require_root
 	need_cmd curl
 	need_cmd tar
@@ -273,6 +438,11 @@ do_install() {
 		log "upgrading dokploy-sentinel ${prev} -> ${version} (linux/${arch}); config + state are kept"
 	else
 		log "installing dokploy-sentinel ${version} for linux/${arch} from ${REPO}"
+	fi
+
+	# Fresh install on a terminal with nothing supplied -> ask for the essentials.
+	if should_prompt; then
+		prompt_settings
 	fi
 
 	tmpdir="$(mktemp -d)"
@@ -326,7 +496,7 @@ main() {
 			grep -E '^#( |$)' "$0" | sed 's/^# \{0,1\}//'
 			;;
 		*)
-			do_install
+			do_install "$@"
 			;;
 	esac
 }
