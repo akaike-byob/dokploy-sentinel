@@ -116,6 +116,17 @@ CGO_ENABLED=0 go build -o dokploy-sentinel ./cmd/dokploy-sentinel
 ./dokploy-sentinel run     --config /etc/dokploy-sentinel/config.toml       # the real run (a systemd timer calls this)
 ```
 
+### Multiple nodes (Docker Swarm)
+
+The watchdog is per-node — each Swarm node sees only its own containers, so it runs on
+every node. Two rollout paths, covered in [`packaging/SWARM.md`](packaging/SWARM.md):
+
+- **SSH fan-out** (recommended, stays host-level systemd) — one command installs it on
+  every node: `./packaging/deploy-swarm.sh --config ./config.toml web1 web2 db1`
+- **Swarm global service** (zero-SSH, runs as a container) — one
+  `docker stack deploy -c packaging/docker-stack.yml sentinel` covers the whole fleet and
+  auto-covers new nodes, at the cost of running as a container.
+
 ## Configuration
 
 Everything — every check's enable/disable and thresholds, the tiers, cooldowns, routing,

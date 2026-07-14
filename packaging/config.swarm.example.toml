@@ -1,0 +1,86 @@
+# dokploy-sentinel — config for the OPTIONAL containerized Swarm deployment
+# (packaging/docker-stack.yml). It differs from packaging/config.example.toml only
+# in the paths: the container reads the HOST's /proc, cgroup, disk, and docker
+# socket through read-only bind mounts, so the roots point at the mount targets.
+#
+# See packaging/config.example.toml for the fully-commented reference of every
+# check, threshold, tier, cooldown, routing, and [[exceptions]] option.
+
+host_label = ""   # empty -> the node hostname (the stack sets it via {{.Node.Hostname}})
+
+# Host trees, bind-mounted read-only into the container by docker-stack.yml.
+proc_root   = "/host/proc"
+cgroup_root = "/host/cgroup"
+
+# Persistent per-node state (bind-mounted from the host so deltas survive restarts).
+report_path = "/var/lib/dokploy-sentinel/report.json"
+state_path  = "/var/lib/dokploy-sentinel/state.json"
+
+# Off-box dead-man's-switch (optional).
+heartbeat_url = ""
+
+[docker]
+socket              = "/var/run/docker.sock"   # mounted read-only
+inspect_concurrency = 12
+collect_deadline    = "20s"
+
+# The webhook URL is injected from the service environment (SLACK_WEBHOOK_URL),
+# so it never lives in this file. Set it at deploy time:
+#   SLACK_WEBHOOK_URL=https://hooks.slack.com/... docker stack deploy -c docker-stack.yml sentinel
+[targets.team]
+url = "${SLACK_WEBHOOK_URL}"
+
+[routing]
+WARN  = ["team"]
+ALERT = ["team"]
+PAGE  = ["team"]
+
+[alerting]
+flap_samples_warn  = 3
+flap_samples_alert = 3
+flap_samples_page  = 1
+resolve_samples    = 2
+cooldown_warn  = "24h"
+cooldown_alert = "6h"
+cooldown_page  = "2h"
+
+[checks.mem_pressure]
+enabled = true
+warn = 80
+alert = 90
+page = 95
+
+[checks.committed_as]
+enabled = true
+warn = 1.5
+alert = 2.0
+commit_vs_swap_ratio = 1.0
+
+[checks.declared_overcommit]
+enabled = true
+headroom_reserve_pct = 15
+headroom_floor = "512m"
+
+[checks.unbounded_mem]
+enabled = true
+
+# Disk paths are the HOST filesystems as seen through the /host bind mount.
+[checks.disk_fill]
+enabled = true
+paths = ["/host", "/host/var/lib/docker"]
+warn = 80
+alert = 90
+days_to_full_alert = 7
+
+[checks.disk_inodes]
+enabled = true
+alert = 90
+
+[checks.swap_thrash]
+enabled = true
+pswpin_pages_per_sec = 1000
+
+[checks.crashloop]
+enabled = true
+restarts = 5
+window = "10m"

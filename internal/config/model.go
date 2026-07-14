@@ -8,6 +8,13 @@ type Config struct {
 	StatePath    string `toml:"state_path"`
 	HeartbeatURL string `toml:"heartbeat_url"`
 
+	// ProcRoot / CgroupRoot are the mount points for the host's /proc and cgroup
+	// v2 trees. They default to the real host paths; a containerized deployment
+	// (e.g. a Swarm global service) overrides them to bind-mounted host paths
+	// like /host/proc and /host/sys/fs/cgroup.
+	ProcRoot   string `toml:"proc_root"`
+	CgroupRoot string `toml:"cgroup_root"`
+
 	Docker     DockerConfig            `toml:"docker"`
 	Targets    map[string]TargetConfig `toml:"targets"`
 	Routing    RoutingConfig           `toml:"routing"`

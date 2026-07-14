@@ -57,7 +57,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck -s sh packaging/install.sh packaging/uninstall.sh
+          shellcheck -s sh packaging/*.sh
 
   goreleaser-snapshot:
     name: goreleaser snapshot (release build dry-run)

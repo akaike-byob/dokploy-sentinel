@@ -11,6 +11,8 @@ func Default() *Config {
 		ReportPath:   "/var/lib/dokploy-sentinel/report.json",
 		StatePath:    "/var/lib/dokploy-sentinel/state.json",
 		HeartbeatURL: "",
+		ProcRoot:     "/proc",
+		CgroupRoot:   "/sys/fs/cgroup",
 		Docker: DockerConfig{
 			Socket:             "/var/run/docker.sock",
 			InspectConcurrency: 12,

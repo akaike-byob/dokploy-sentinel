@@ -1,0 +1,71 @@
+# dokploy-sentinel — OPTIONAL Swarm global-service deployment (the zero-SSH path).
+#
+# One command from a manager runs the watchdog on EVERY node (and auto-covers
+# nodes added later). Trade-off: it runs as a container, which softens the
+# project's "cannot be OOM-killed by the condition it detects" guarantee — it's
+# resource-capped and restart-policied, but the systemd install (install.sh /
+# deploy-swarm.sh) is still the recommended path. Choose per your risk appetite.
+#
+# Deploy (from a Swarm manager):
+#   SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' \
+#     docker stack deploy -c packaging/docker-stack.yml sentinel
+#
+# The Swarm config object distributes config.swarm.example.toml to every node; the
+# webhook URL is passed via the environment (kept out of the config file) and is
+# expanded from ${SLACK_WEBHOOK_URL} at runtime.
+#
+# Update the config later:
+#   docker config rm sentinel-config-v1   # then bump the name below and redeploy
+# (Swarm configs are immutable; version the name to roll out a change.)
+#
+# Remove:
+#   docker stack rm sentinel
+
+version: "3.8"
+
+services:
+  sentinel:
+    image: ghcr.io/akaike-byob/dokploy-sentinel:latest
+    # host_label resolves to the NODE hostname, not the container id.
+    hostname: "{{.Node.Hostname}}"
+    # One-shot 'run' re-executed on a cadence by the restart policy below — no
+    # long-running daemon, matching the design's "short-lived process" stance.
+    command: ["run", "--config", "/etc/dokploy-sentinel/config.toml"]
+    environment:
+      # Baked in from the deploying shell; never written to the config file.
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    configs:
+      - source: sentinel-config
+        target: /etc/dokploy-sentinel/config.toml
+        mode: 0600
+    volumes:
+      # Read-only host visibility. The socket is only ever read (GET), so :ro is safe.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - /:/host:ro
+      # Per-node persistent state so rate deltas + alert memory survive restarts.
+      - /var/lib/dokploy-sentinel:/var/lib/dokploy-sentinel
+    deploy:
+      mode: global            # exactly one task per node, including future nodes
+      restart_policy:
+        condition: any        # re-run after each one-shot exit...
+        delay: 60s            # ...every ~60s — this is the timer
+      resources:
+        limits:
+          memory: 64M         # the watchdog must never become the problem it watches
+        reservations:
+          memory: 24M
+      update_config:
+        parallelism: 0        # update all nodes at once (it's idempotent + cheap)
+
+configs:
+  sentinel-config:
+    # Swarm distributes this file to every node. Configs are immutable — to change
+    # it, bump the name (e.g. sentinel-config-v2) here and in the service, then
+    # redeploy.
+    file: ./config.swarm.example.toml
+
+# NOTE: read-only bind mounts (docker.sock, /proc, /sys/fs/cgroup, /) are declared
+# per-service above rather than as named volumes so each node mounts its OWN host
+# paths — which is exactly what a per-node monitor needs.

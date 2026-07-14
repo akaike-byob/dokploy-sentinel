@@ -23,6 +23,14 @@ func (c *Config) Validate(undecoded []string) error {
 		add("unknown config key %q (typo, or a check not supported in this version)", k)
 	}
 
+	// ---- host roots ----
+	if c.ProcRoot == "" {
+		add("proc_root must not be empty")
+	}
+	if c.CgroupRoot == "" {
+		add("cgroup_root must not be empty")
+	}
+
 	// ---- docker ----
 	if c.Docker.Socket == "" {
 		add("docker.socket must not be empty")

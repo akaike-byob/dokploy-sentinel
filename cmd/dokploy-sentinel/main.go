@@ -83,11 +83,13 @@ func cmdRun(args []string) int {
 	defer cancel()
 
 	runner := &app.Runner{
-		Cfg:       cfg,
-		Clock:     clock.Real{},
-		Sender:    alert.NewSender(&http.Client{Timeout: 10 * time.Second}, alert.SlackRenderer{}, nil),
-		Heartbeat: alert.NewHeartbeat(cfg.HeartbeatURL, nil),
-		DryRun:    *dryRun,
+		Cfg:        cfg,
+		Clock:      clock.Real{},
+		Sender:     alert.NewSender(&http.Client{Timeout: 10 * time.Second}, alert.SlackRenderer{}, nil),
+		Heartbeat:  alert.NewHeartbeat(cfg.HeartbeatURL, nil),
+		DryRun:     *dryRun,
+		ProcRoot:   cfg.ProcRoot,
+		CgroupRoot: cfg.CgroupRoot,
 	}
 
 	res, err := runner.RunOnce(ctx)
