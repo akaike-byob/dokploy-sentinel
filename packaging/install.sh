@@ -11,6 +11,13 @@
 #
 #   INTERVAL=30s curl -fsSL .../install.sh | sh
 #
+# Upgrade (same command — it is idempotent):
+#   curl -fsSL .../install.sh | sh                 # to the latest release
+#   VERSION=v1.2.3 curl -fsSL .../install.sh | sh  # to a specific release
+#   Re-running replaces the binary + units and KEEPS your config + state; the
+#   timer picks up the new binary on its next tick. Your config is re-validated
+#   before the timer is re-armed, so a config the new version rejects is caught.
+#
 # Uninstall:
 #   curl -fsSL .../install.sh | sh -s -- --uninstall
 #
@@ -256,7 +263,17 @@ do_install() {
 
 	arch="$(detect_arch)"
 	version="$(resolve_version)"
-	log "installing dokploy-sentinel ${version} for linux/${arch} from ${REPO}"
+
+	# Detect an existing install so we can report upgrade vs fresh install.
+	prev=""
+	if [ -x "$BIN_DEST" ]; then
+		prev="$("$BIN_DEST" version 2>/dev/null | awk '{print $2}')"
+	fi
+	if [ -n "$prev" ]; then
+		log "upgrading dokploy-sentinel ${prev} -> ${version} (linux/${arch}); config + state are kept"
+	else
+		log "installing dokploy-sentinel ${version} for linux/${arch} from ${REPO}"
+	fi
 
 	tmpdir="$(mktemp -d)"
 	trap 'rm -rf "$tmpdir"' EXIT INT TERM
@@ -267,7 +284,11 @@ do_install() {
 	install_interval_dropin
 	arm
 
-	log "done. status: systemctl status dokploy-sentinel.timer"
+	if [ -n "$prev" ]; then
+		log "upgraded ${prev} -> ${version}. status: systemctl status dokploy-sentinel.timer"
+	else
+		log "done. status: systemctl status dokploy-sentinel.timer"
+	fi
 }
 
 do_uninstall() {

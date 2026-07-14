@@ -127,6 +127,27 @@ every node. Two rollout paths, covered in [`packaging/SWARM.md`](packaging/SWARM
   `docker stack deploy -c packaging/docker-stack.yml sentinel` covers the whole fleet and
   auto-covers new nodes, at the cost of running as a container.
 
+### Upgrading
+
+Upgrading is just re-running the same command — it's idempotent and **keeps your config
+and state**:
+
+```bash
+# single host: re-run the installer (latest, or pin with VERSION=vX.Y.Z)
+curl -fsSL https://raw.githubusercontent.com/akaike-byob/dokploy-sentinel/main/packaging/install.sh | sh
+
+# Swarm, SSH fan-out: re-run the deploy script across the fleet
+VERSION=v0.2.0 ./packaging/deploy-swarm.sh web1 web2 db1
+
+# Swarm, global service: re-run stack deploy (re-pulls :latest), or pin a tag
+docker stack deploy -c packaging/docker-stack.yml sentinel
+```
+
+The systemd service re-execs the binary each tick, so no manual restart is needed, and the
+installer re-validates your config before re-arming the timer — so a config the new version
+would reject is caught rather than silently breaking the monitor. See
+[`packaging/SWARM.md`](packaging/SWARM.md) for the multi-node specifics.
+
 ## Configuration
 
 Everything — every check's enable/disable and thresholds, the tiers, cooldowns, routing,

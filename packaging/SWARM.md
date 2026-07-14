@@ -45,6 +45,18 @@ Keep the webhook out of the shared config file by leaving `url = "${SLACK_WEBHOO
 and providing the value via a systemd `EnvironmentFile=-/etc/dokploy-sentinel/env` on each
 node (a line `SLACK_WEBHOOK_URL=https://hooks.slack.com/...`).
 
+**Upgrade** the whole fleet by re-running the script — `install.sh` is idempotent, so it
+replaces the binary + units on each node and keeps config + state. Omit `--config` to leave
+each node's config untouched:
+
+```sh
+# to the latest release on every node
+SUDO=sudo ./packaging/deploy-swarm.sh web1 web2 db1
+
+# or pin a specific release
+VERSION=v0.2.0 SUDO=sudo ./packaging/deploy-swarm.sh web1 web2 db1
+```
+
 Uninstall everywhere:
 
 ```sh
@@ -82,6 +94,20 @@ How it works (see [`docker-stack.yml`](docker-stack.yml) and
   alert memory survive the 60s restarts.
 - **Identity:** `hostname: "{{.Node.Hostname}}"` makes each task report its node's name.
 - **Caps:** memory is limited to 64M — the watchdog can't become the problem it watches.
+
+**Upgrade** by re-running the deploy — `docker stack deploy` defaults to
+`--resolve-image always`, so it re-pulls `:latest` and rolls the service across all nodes:
+
+```sh
+SLACK_WEBHOOK_URL='...' docker stack deploy -c docker-stack.yml sentinel
+```
+
+To pin (or roll back to) a specific image, either edit `image:` in `docker-stack.yml` to a
+tag, or update in place without redeploying:
+
+```sh
+docker service update --image ghcr.io/akaike-byob/dokploy-sentinel:v0.2.0 sentinel_sentinel
+```
 
 Change the config later (Swarm configs are immutable): bump the config name in
 `docker-stack.yml` (e.g. `sentinel-config-v2`) and redeploy. Remove everything with
