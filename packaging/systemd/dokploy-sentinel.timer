@@ -1,0 +1,13 @@
+[Unit]
+Description=Run dokploy-sentinel periodically
+
+[Timer]
+# OnBootSec: don't fire during boot churn.
+OnBootSec=1min
+# OnUnitActiveSec: default interval; overridden by the install-time drop-in.
+OnUnitActiveSec=60s
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

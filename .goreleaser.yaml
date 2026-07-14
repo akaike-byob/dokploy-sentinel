@@ -1,0 +1,84 @@
+# goreleaser v2 configuration for dokploy-sentinel.
+# Dry-run / validate:  goreleaser release --snapshot --clean
+# Real release:        goreleaser release --clean   (driven by CI on a v* tag)
+version: 2
+
+project_name: dokploy-sentinel
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dokploy-sentinel
+    binary: dokploy-sentinel
+    main: ./cmd/dokploy-sentinel
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    ids:
+      - dokploy-sentinel
+    # Matches the installer's expected name: dokploy-sentinel_<version>_linux_<arch>.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    # Ship the packaging files inside the archive (paths preserved) so the installer
+    # (and manual users) can drop the units + example config straight from the extracted
+    # tarball. The installer reads packaging/systemd/* and packaging/config.example.toml.
+    files:
+      - src: packaging/systemd/dokploy-sentinel.service
+      - src: packaging/systemd/dokploy-sentinel-failure.service
+      - src: packaging/systemd/dokploy-sentinel.timer
+      - src: packaging/config.example.toml
+      - src: packaging/install.sh
+      - src: packaging/uninstall.sh
+      - src: README.md
+
+checksum:
+  name_template: "SHA256SUMS"
+  algorithm: sha256
+
+# minisign signature over the checksums file — produces SHA256SUMS.minisig.
+# GUARDED: kept commented so a default release (no signing key) succeeds and snapshot
+# dry-runs stay clean. To enable, uncomment and provide the key: write the minisign
+# secret key to a file in the release job and export its path as MINISIGN_KEY (plus
+# MINISIGN_PASSWORD). The installer already treats the .minisig as optional.
+#
+# signs:
+#   - id: minisign
+#     cmd: minisign
+#     signature: "${artifact}.minisig"
+#     args:
+#       - -S
+#       - -s
+#       - "{{ .Env.MINISIGN_KEY }}"
+#       - -x
+#       - "${signature}"
+#       - -m
+#       - "${artifact}"
+#     artifacts: checksum
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: akaike-byob
+    name: dokploy-sentinel

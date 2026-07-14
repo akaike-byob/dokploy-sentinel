@@ -1,0 +1,127 @@
+# dokploy-sentinel — example configuration
+#
+# Install location: /etc/dokploy-sentinel/config.toml  (mode 0600, owned by root)
+# Validate after editing:  dokploy-sentinel check   --config /etc/dokploy-sentinel/config.toml
+# Smoke-test live:         dokploy-sentinel selftest --config /etc/dokploy-sentinel/config.toml
+#
+# Every check block has `enabled` + thresholds, plus optional per-check overrides
+# (`tier`, `cooldown`, `flap_samples`). Slack-only in v1: a target's `url` is a Slack
+# incoming webhook.
+#
+# SECRETS: webhook URLs (and any other value) may be injected via ${VAR} env expansion
+# from an EnvironmentFile=-/etc/dokploy-sentinel/env (mode 0600, root) so they need not
+# live in this file, e.g.  url = "${SLACK_TEAM_WEBHOOK}"
+
+# ---- identity & delivery ----------------------------------------------------
+host_label    = ""                                     # label in alerts; defaults to hostname if empty
+report_path   = "/var/lib/dokploy-sentinel/report.json"
+state_path    = "/var/lib/dokploy-sentinel/state.json"
+heartbeat_url = ""                                     # dead-man's-switch (healthchecks.io-style); empty = off
+
+[docker]
+socket              = "/var/run/docker.sock"           # configurable for rootless / Podman
+inspect_concurrency = 12                               # bounded fan-out
+collect_deadline    = "20s"                            # total per-run collection budget
+
+# ---- Slack targets (name -> incoming webhook URL) ---------------------------
+# Reference these names from [routing] below. Prefer ${VAR} for the URL (see SECRETS).
+[targets.team]
+url = "https://hooks.slack.com/services/T00000000/B00000000/team"
+# min_tier = "ALERT"                                   # this channel never receives below ALERT
+# mention  = ""                                        # e.g. "<@U123>" — only added on PAGE
+
+[targets.oncall]
+url     = "https://hooks.slack.com/services/T00000000/B00000000/pager"
+mention = "<@U123ONCALL>"                              # pinged only on PAGE
+
+[targets.lownoise]
+url = "https://hooks.slack.com/services/T00000000/B00000000/lownoise"
+
+# ---- tier -> which targets (fan-out) ----------------------------------------
+# RESOLVED follows wherever the alert originally fired.
+[routing]
+WARN  = ["lownoise"]
+ALERT = ["team"]
+PAGE  = ["team", "oncall"]
+
+# ---- global alert-hygiene defaults (overridable per check) ------------------
+[alerting]
+flap_samples_warn  = 3
+flap_samples_alert = 3
+flap_samples_page  = 1                                 # PAGE fires on first breach (time-to-page)
+resolve_samples    = 2                                 # consecutive OK samples before auto-resolve
+cooldown_warn  = "24h"
+cooldown_alert = "6h"
+cooldown_page  = "2h"
+
+# ---- checks -----------------------------------------------------------------
+# Thresholds are percentages/ratios where possible, so they behave sensibly from a
+# 2 GB VPS to a 128 GB server without per-host tuning. `warn < alert < page` is enforced.
+
+[checks.mem_pressure]
+enabled = true
+warn    = 80                                           # percent of RAM
+alert   = 90
+page    = 95
+
+[checks.committed_as]
+enabled              = true
+warn                 = 1.5                             # Committed_AS / MemTotal (healthy Linux sits >1.0)
+alert                = 2.0                             # the reference incident was 2.2
+commit_vs_swap_ratio = 1.0                             # also fire if Committed_AS > (MemTotal+SwapTotal)*this
+
+[checks.declared_overcommit]
+enabled              = true
+headroom_reserve_pct = 15                              # never let sum(limits) consume >85% of RAM
+headroom_floor       = "512m"                          # min headroom per UNBOUNDED container
+
+[checks.unbounded_mem]
+enabled = true
+
+[checks.disk_fill]
+enabled            = true
+paths              = ["/", "/var/lib/docker"]
+warn               = 80                                # percent used
+alert              = 90
+days_to_full_alert = 7                                 # also ALERT when projected to fill within N days
+
+[checks.disk_inodes]
+enabled = true
+alert   = 90                                           # percent of inodes used
+
+[checks.swap_thrash]
+enabled             = true
+pswpin_pages_per_sec = 1000                            # absolute; tune per storage (HDD VPS vs NVMe server)
+flap_samples        = 3
+
+[checks.crashloop]
+enabled  = true
+restarts = 5                                           # restarts within the window trips the check
+window   = "10m"
+
+# ---- per-container exceptions (optional) ------------------------------------
+# Adjust or silence per-container checks for specific containers. Rules are evaluated
+# top-to-bottom and ALL matching rules apply (a later rule wins on direct conflict).
+# Host-level checks (mem_pressure, committed_as, disk_*, swap_thrash) have no container
+# to match and are NOT exceptable here. A mute relabels (still written to report.json's
+# `suppressed` list) — it never makes the host look green. `expires` time-boxes a rule.
+#
+# [[exceptions]]
+# reason = "ephemeral BuildKit agent — unbounded + restart churn are expected"
+# match  = { name = "buildkit-*" }                     # glob on container name
+# mute   = ["unbounded_mem", "crashloop"]              # silence these checks for matches
+#
+# [[exceptions]]
+# reason              = "ClickHouse OLAP store is memory-hungry by design"
+# match               = { service = "clickhouse" }     # compose/swarm service-name shorthand
+# exclude_from_budget = true                           # drop from declared_overcommit's sum
+#   [exceptions.retier]
+#   container_health = "WARN"                          # downgrade this container's health alerts
+#   [exceptions.thresholds.crashloop]
+#   restarts = 20                                      # override the global 5 for this container
+#
+# [[exceptions]]
+# reason  = "legacy worker not yet fixed — mute all, but time-box it"
+# match   = { label = "com.acme.tier=legacy" }         # key=value; value may glob
+# mute    = ["*"]                                      # every exceptable check for this container
+# expires = "2026-09-01"                               # after this the rule is ignored + a WARN fires

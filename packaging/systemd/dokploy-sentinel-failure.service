@@ -1,0 +1,11 @@
+[Unit]
+Description=Report a dokploy-sentinel run failure
+Documentation=https://github.com/akaike-byob/dokploy-sentinel
+
+# Triggered via OnFailure= from dokploy-sentinel.service when a run exits non-zero.
+# Emits a single, greppable line to the journal so a failing watchdog is itself visible
+# (the watchdog must never fail silently).
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo "dokploy-sentinel run failed — check: journalctl -u dokploy-sentinel.service -n 50 --no-pager" | systemd-cat -t dokploy-sentinel -p err'

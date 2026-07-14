@@ -1,0 +1,55 @@
+{
+  "text": "⚪ MONITORING DEGRADED — Memory pressure on dokploy-01: 96% (21.1/22 GiB) (threshold 95%)",
+  "attachments": [
+    {
+      "color": "#8D8D8D",
+      "blocks": [
+        {
+          "type": "header",
+          "text": {
+            "type": "plain_text",
+            "text": "⚪ MONITORING DEGRADED — Memory pressure",
+            "emoji": true
+          }
+        },
+        {
+          "type": "section",
+          "fields": [
+            {
+              "type": "mrkdwn",
+              "text": "*Host:*\ndokploy-01"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Scope:*\nhost"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Measured:*\n96% (21.1/22 GiB)"
+            },
+            {
+              "type": "mrkdwn",
+              "text": "*Threshold:*\n95%"
+            }
+          ]
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": "*Suggested fix:* restart or cap the largest unbounded container now; swap is thrashing (see swap_thrash)."
+          }
+        },
+        {
+          "type": "context",
+          "elements": [
+            {
+              "type": "mrkdwn",
+              "text": "check=`mem_pressure` · key=`mem_pressure:host` · 2026-07-14T09:42:03Z · run #1187"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

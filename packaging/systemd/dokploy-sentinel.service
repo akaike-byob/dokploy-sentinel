@@ -1,0 +1,30 @@
+[Unit]
+Description=dokploy-sentinel host watchdog
+Documentation=https://github.com/akaike-byob/dokploy-sentinel
+After=docker.service
+Wants=docker.service
+# self-report non-zero exits (systemd has no inline comments — keep this on its own line)
+OnFailure=dokploy-sentinel-failure.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dokploy-sentinel run --config /etc/dokploy-sentinel/config.toml
+# Secrets (e.g. webhook URLs) may be injected via ${VAR} expansion from this file.
+# The leading '-' makes it optional so the unit still starts when the file is absent.
+EnvironmentFile=-/etc/dokploy-sentinel/env
+Nice=10
+IOSchedulingClass=idle
+# Resource caps — the watchdog must never become the problem it watches for
+MemoryHigh=48M
+MemoryMax=64M
+CPUQuota=25%
+TasksMax=32
+# Sandboxing — but it NEEDS host visibility, so do not over-sandbox
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dokploy-sentinel
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Do NOT set: ProtectControlGroups=true, ProcSubset=pid, PrivateNetwork
+#   -> it reads /proc + cgroup files and talks to docker.sock + Slack.
